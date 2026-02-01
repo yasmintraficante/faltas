@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Controle de Faltas</title>
+<style>
+:root{
+  --bg:#f0f2f5;
+  --card:#fff;
+  --text:#1c1c28;
+  --accent:#7c3aed;
+  --ok:#10b981;
+  --bad:#ef4444;
+}
+body{margin:0;font-family:system-ui;background:var(--bg);color:var(--text);}
+.wrap{max-width:1100px;margin:auto;padding:24px;}
+h1{text-align:center;color:var(--accent);}
+.card{background:var(--card);border-radius:16px;padding:20px;margin-top:16px;box-shadow:0 4px 12px rgba(0,0,0,0.08);}
+button{background:var(--accent);color:#fff;border:none;border-radius:12px;padding:10px 14px;cursor:pointer;font-weight:600;}
+button:hover{opacity:0.9;}
+button.ghost{background:transparent;color:var(--accent);border:2px solid var(--accent);}
+input,select{border:2px solid var(--accent);border-radius:12px;padding:10px;margin:4px 0;width:100%;}
+.grid7{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;margin-bottom:10px;}
+.day{padding:10px;text-align:center;border:2px solid var(--accent);border-radius:12px;font-weight:600;position:relative;min-height:60px;}
+.click{cursor:pointer;}
+.sel{background:#ede9fe;}
+.presenca{background:#dcfce7;border-color:var(--ok);}
+.falta{background:#fee2e2;border-color:var(--bad);}
+.subject-box{border-radius:6px;padding:2px 4px;margin-top:2px;font-size:12px;color:#fff;cursor:pointer;}
+.presenca-box{background:var(--ok);}
+.falta-box{background:var(--bad);}
+
+/* Modal */
+.modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.4);display:flex;justify-content:center;align-items:center;visibility:hidden;opacity:0;transition:0.3s;}
+.modal.show{visibility:visible;opacity:1;}
+.modal-content{background:white;padding:20px;border-radius:12px;max-width:450px;width:90%;box-shadow:0 6px 20px rgba(0,0,0,0.2);}
+.modal-content h3{text-align:center;margin-top:0;}
+.modal-content .subject-btn{display:block;width:100%;padding:10px;margin:6px 0;border:none;border-radius:8px;color:#fff;font-weight:600;cursor:pointer;font-size:14px;}
+.modal-content .presenca-btn{background:var(--ok);}
+.modal-content .falta-btn{background:var(--bad);}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>📚 Controle de Faltas</h1>
+
+<select id="semester"></select>
+<button class="ghost" onclick="newSemester()">Novo semestre</button>
+<button class="ghost" onclick="resetAll()">Limpar tudo</button>
+
+<div class="card">
+<h2>Cadastrar aula</h2>
+<div class="grid7" id="weekPicker"></div>
+<input id="subject" placeholder="Disciplina">
+<input id="time" placeholder="Horário">
+<input id="classes" type="number" placeholder="Qtd aulas">
+<input id="max" type="number" placeholder="Máx faltas">
+<button onclick="saveClass()">Salvar</button>
+</div>
+
+<div class="card">
+<h2>Grade semanal</h2>
+<div id="schedule"></div>
+</div>
+
+<div class="card">
+<h2>Resumo de faltas</h2>
+<div id="summary"></div>
+</div>
+
+<div class="card">
+<h2>Calendário</h2>
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+<button onclick="prevMonth()">◀</button>
+<b id="monthLabel"></b>
+<button onclick="nextMonth()">▶</button>
+</div>
+<div class="grid7" id="weekdays"></div>
+<div class="grid7" id="calendar"></div>
+</div>
+</div>
+
+<!-- Modal -->
+<div id="modal" class="modal">
+<div class="modal-content">
+<h3 id="modalTitle"></h3>
+<div id="modalBody"></div>
+<button onclick="closeModal()" style="margin-top:12px;width:100%;padding:10px;">Fechar</button>
+</div>
+</div>
+
+<script>
+const DAYS=['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+const KEY='faltas_ok';
+let state=JSON.parse(localStorage.getItem(KEY))||{semesters:{},current:null,calendar:{}};
+let currentModalKey=null;
+let selectedDays=new Set();
+
+function save(){localStorage.setItem(KEY,JSON.stringify(state));}
+function init(){if(!state.current)newSemester(true);renderSemester();renderWeekPicker();renderAll();}
+
+// Semestre
+function newSemester(first=false){
+  const name=first?'1º Semestre':prompt('Nome do semestre'); if(!name) return;
+  if(!state.semesters[name]) state.semesters[name]={classes:[],limits:{}};
+  state.current=name; save(); renderSemester(); renderAll();
+}
+function renderSemester(){
+  const s=document.getElementById('semester'); s.innerHTML='';
+  Object.keys(state.semesters).forEach(k=>{
+    const o=document.createElement('option'); o.value=k; o.textContent=k;
+    if(k===state.current) o.selected=true;
+    s.appendChild(o);
+  });
+  s.onchange=e=>{state.current=e.target.value; save(); renderAll();}
+}
+
+// Week picker
+function renderWeekPicker(){
+  const box=document.getElementById('weekPicker'); box.innerHTML='';
+  DAYS.forEach((d,i)=>{
+    const el=document.createElement('div'); el.className='day click'; el.textContent=d;
+    el.onclick=()=>{selectedDays.has(i)?(selectedDays.delete(i),el.classList.remove('sel')):(selectedDays.add(i),el.classList.add('sel'))};
+    box.appendChild(el);
+  });
+}
+
+// Save class
+function saveClass(){
+  if(!selectedDays.size) return alert('Selecione dias');
+  const sub=document.getElementById('subject').value.trim();
+  const time=document.getElementById('time').value.trim();
+  const cls=+document.getElementById('classes').value;
+  const maxv=+document.getElementById('max').value;
+  if(!sub||!time||!cls||!maxv) return alert('Preencha tudo');
+  const cur=state.semesters[state.current];
+  selectedDays.forEach(d=>cur.classes.push({day:d,subject:sub,time,classes:cls}));
+  cur.limits[sub]=maxv;
+  selectedDays.clear(); renderWeekPicker(); save(); renderSchedule(); renderSummary();
+}
+
+// Schedule
+function renderSchedule(){
+  const box=document.getElementById('schedule'); box.innerHTML='';
+  const cur=state.semesters[state.current];
+  DAYS.forEach((d,i)=>{
+    const list=cur.classes.filter(c=>c.day===i);
+    if(!list.length) return;
+    box.innerHTML+=`<b>${d}</b><br>` + list.map(c=>`• ${c.subject} — ${c.time} (${c.classes} aulas)`).join('<br>') + '<br><br>';
+  });
+}
+
+// Calendar
+let view=new Date();
+function renderCalendar(){
+  const cal=document.getElementById('calendar'); 
+  const wd=document.getElementById('weekdays'); 
+  const lbl=document.getElementById('monthLabel'); 
+  cal.innerHTML=''; 
+  wd.innerHTML='';
+  
+  lbl.textContent=view.toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
+  DAYS.forEach(d=>{const h=document.createElement('div');h.className='day';h.textContent=d;wd.appendChild(h);});
+  
+  const y=view.getFullYear(), m=view.getMonth(), first=new Date(y,m,1), last=new Date(y,m+1,0);
+  for(let i=0;i<first.getDay();i++) cal.appendChild(document.createElement('div'));
+  
+  for(let d=1;d<=last.getDate();d++){
+    const date=new Date(y,m,d); 
+    const key=date.toISOString().slice(0,10);
+    const cell=document.createElement('div'); 
+    cell.className='day click'; 
+    cell.textContent=d;
+
+    const dayData=state.calendar[key];
+    if(dayData){
+      for(let s in dayData){
+        const boxDiv=document.createElement('div');
+        boxDiv.className='subject-box '+(dayData[s]>0?'falta-box':'presenca-box');
+        boxDiv.textContent=s;
+        cell.appendChild(boxDiv);
+      }
+    }
+
+    cell.onclick=()=>openModal(date,key); 
+    cal.appendChild(cell);
+  }
+}
+
+// Modal simplificado
+function openModal(date,key){
+  const cur=state.semesters[state.current];
+  const today=cur.classes.filter(c=>c.day===date.getDay());
+  if(!today.length) return alert('Sem aulas neste dia');
+  currentModalKey=key;
+  const modal=document.getElementById('modal'); 
+  const body=document.getElementById('modalBody'); 
+  const title=document.getElementById('modalTitle');
+  title.textContent=`Registrar Presença/Falta - ${date.toLocaleDateString('pt-BR')}`;
+  body.innerHTML='';
+
+  today.forEach(c=>{
+    const btn=document.createElement('button');
+    btn.className='subject-btn '+((state.calendar[key] && state.calendar[key][c.subject]>0)?'falta-btn':'presenca-btn');
+    btn.textContent=c.subject;
+    btn.onclick=()=>{
+      // Alterna status
+      if(state.calendar[key] && state.calendar[key][c.subject]>0){
+        state.calendar[key][c.subject]=0; btn.className='subject-btn presenca-btn';
+      } else {
+        const totalAulas = c.classes;
+        if(!state.calendar[key]) state.calendar[key]={};
+        state.calendar[key][c.subject]=totalAulas; 
+        btn.className='subject-btn falta-btn';
+      }
+      save();
+      renderCalendar();
+      renderSummary();
+    };
+    body.appendChild(btn);
+  });
+
+  modal.classList.add('show');
+}
+function closeModal(){document.getElementById('modal').classList.remove('show');}
+
+// Summary
+function renderSummary(){
+  const box=document.getElementById('summary'); box.innerHTML='';
+  const cur=state.semesters[state.current];
+  Object.keys(cur.limits).forEach(subject=>{
+    let faltas=0;
+    Object.values(state.calendar).forEach(dayData=>{if(dayData[subject]) faltas+=dayData[subject];});
+    const maxv=cur.limits[subject];
+    const pct=Math.min(faltas/maxv*100,100);
+    let cls='fill'; if(pct>=80&&pct<100) cls+=' warn'; if(pct>=100) cls+=' danger';
+    box.innerHTML+=`<div style="margin-bottom:12px"><b>${subject} — ${faltas}/${maxv} aulas (${Math.round(pct)}%)</b><div class="progress"><div class="${cls}" style="width:${pct}%"></div></div></div>`;
+  });
+}
+
+// Navigation
+function renderAll(){renderSchedule();renderCalendar();renderSummary();}
+function resetAll(){if(confirm('Apagar tudo?')){localStorage.removeItem(KEY);location.reload();}}
+function prevMonth(){view.setMonth(view.getMonth()-1);renderCalendar();}
+function nextMonth(){view.setMonth(view.getMonth()+1);renderCalendar();}
+
+init();
+</script>
+</body>
+</html>
